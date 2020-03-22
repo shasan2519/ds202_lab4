@@ -1,0 +1,183 @@
+---
+title: "team.rmd"
+author: "Syed Hasan Github @ github.com/shasan2519"
+date: "3/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+CyDef <- read_excel('cyclonesFootball2019.xlsx', sheet='Defensive')
+CyOff <- read_excel('cyclonesFootball2019.xlsx', sheet='Offensive')
+bio <- read_excel('cyclonesFootball2019.xlsx', sheet='Biography')
+```
+
+# Part 1
+```{r}
+#1 convert as factor all three sheets
+CyOff$Name = as.factor(CyOff$Name)
+CyOff$Opponent_Opponent = as.factor(CyOff$Opponent_Opponent)
+
+CyDef$Name = as.factor(CyDef$Name)
+CyDef$Opponent_Opponent = as.factor(CyDef$Opponent_Opponent)
+
+bio$Name = as.factor(bio$Name)
+
+#2 convert as numerical/double all sheets
+defClean = CyDef %>%
+  mutate_if(is.character, as.numeric)
+
+offClean = CyOff %>%
+  mutate_if(is.character, as.numeric)
+
+bioClean = bio %>%
+  mutate_at("Weight", as.numeric)
+
+
+#3 convert height to numerical/double only bio
+bio <- bio %>%
+  separate('Height', c("Feet", "Inches"), 
+           sep = "-(?=[^ ]+$)", remove = FALSE) %>%
+  mutate_at("Feet", as.numeric) %>%
+  mutate_at("Inches", as.numeric)
+
+bio$Height <- bio$Feet * 12 + bio$Inches
+
+bio <- bio %>% select(-Feet, -Inches)
+
+```
+
+
+```{r}
+str(defClean)
+str(offClean)
+str(bioClean)
+```
+
+# Part 2.1
+```{r}
+#1
+defTidy <- defClean %>% 
+  pivot_longer(Tackles_Solo:Pass_PB, names_to = 'Statistic',values_to='Value')
+head(defTidy)
+
+#2
+defTidy %>% 
+  ggplot(aes(x = defTidy$Value))+geom_histogram()+facet_wrap(~Statistic)+ggtitle("Defense Stats") +xlab("Occurence")
+
+#3
+WestVirginia_KansasState <- defTidy %>% 
+  filter(Statistic == 'Tackles_Solo') %>% 
+  filter(Opponent_Opponent == 'West Virginia' | Opponent_Opponent == 'Kansas State') %>%
+  pivot_wider(names_from='Opponent_Opponent', values_from='Value')
+
+ggplot(data = WestVirginia_KansasState, aes(x = WestVirginia_KansasState$'West Virginia', y = WestVirginia_KansasState$'Kansas State')) +geom_point() +ggtitle("Tackles(individuals)")
+
+
+```
+
+Rare defensive skills are sacks and turnovers
+
+
+According to our data Iowa State has a better defense against Kansas State.
+
+# Part 2.2
+```{r}
+#1
+bioTidy <- bioClean %>%
+  separate('Hometown', c("Home_City", "Home_State"),sep = ", (?=[^ ]+$)")
+
+bioTidy %>% head(3)
+
+#2
+bioTidy %>% group_by(Home_State) %>% summarize(Count = n())
+
+```
+
+Player from each state sorted by state.
+
+# Part 3
+
+Weight and Receivng yards do have a correlation. It is medium and negtive
+
+Brock Purdy is slightly better than others
+
+Overall out of state are equal, but out of state players are slightly better in the defense.
+```{r}
+#1
+part3merge <- right_join(offClean, bioTidy, by = "Name")
+
+#2
+part3merge %>% 
+  ggplot(aes(x = Weight, y = Receiving_YDS)) +geom_point() +ggtitle("PLayer Stats (weight and receiving)") +xlab("weight") +ylab("yards")
+
+#3
+offTidy <- offClean %>%
+  pivot_longer(Rushing_ATT:Passing_INT, names_to = 'Off_Statistic',values_to='Off_Value')
+
+team <- full_join(offTidy, defTidy) %>%
+  mutate_if(is.numeric, ~replace(., is.na(.), 0))
+
+team$Is_Purdy <- team$Name == 'Purdy, Brock'
+
+team$Is_Purdy <- factor(team$Is_Purdy, labels =  c("Other", "Purdy"))
+
+team <- team %>%
+  group_by(Opponent_Opponent, Is_Purdy) %>%
+  subset(Off_Statistic == 'Rushing_YDS' | Off_Statistic == 'Receiving_YDS' | Off_Statistic == 'Passing_YDS' |Statistic == 'Tackles_Solo') %>%
+  summarize(off_Yards = sum(Off_Value), def_Tackles = sum(Value)) %>%
+  pivot_wider(names_from=Is_Purdy, values_from='off_Yards') %>%
+  mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>%
+  group_by(Opponent_Opponent) %>%
+  summarize(Purdy = sum(Purdy), Other = sum(Other), Tackles = sum(def_Tackles))
+
+team %>%
+  ggplot(aes(x = Purdy, y = Other)) +geom_point() +ggtitle('Purdy yard vs rest of the teams')
+
+team %>%
+  ggplot(aes(x = Purdy, y = Tackles)) +geom_point() +ggtitle('Pudry yards Vs. individual tackles')
+
+#4
+bioTidy$Iowan <- bioTidy$Home_State == 'Iowa'
+
+part3merge <- right_join(offClean, bioTidy, by = "Name")
+
+defBioMerge <- right_join(defClean, bioTidy, by = "Name")
+
+part3merge <- part3merge %>% 
+  mutate(Rushing_YDS = replace_na(Rushing_YDS, 0)) %>%
+  mutate(Passing_YDS = replace_na(Passing_YDS, 0)) %>%
+  mutate(Receiving_YDS = replace_na(Receiving_YDS, 0)) %>%
+  select(Name, Iowan, Rushing_YDS, Passing_YDS, Receiving_YDS) %>%
+  mutate(sum = rowSums(.[3:5]))
+
+part3merge %>%
+  group_by(Iowan, Name) %>%
+  summarize(Total_YDS = sum(sum)) %>%
+  subset(Total_YDS != 0) %>% ggplot(aes(x = Iowan, y = Total_YDS)) +geom_boxplot() +ggtitle("Yard classified by in/out of states")
+
+part3merge %>%
+  subset(sum != 0) %>%
+  group_by(Iowan) %>%
+  summarize(Mean_Player_YDS = sum(sum) / n()) %>%
+  print()
+
+part3merge %>%
+  subset(sum != 0 & Name != 'Purdy, Brock') %>%
+  group_by(Iowan) %>%
+  summarize(Mean_Player_YDS = sum(sum) / n(), count = n()) %>%
+  print()
+```
+
+
+
+
+
+
